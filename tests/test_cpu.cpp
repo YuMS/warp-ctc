@@ -116,6 +116,8 @@ bool options_test() {
     expected_scores[0] =
             -std::log(a[offset(0, 0, 0)] * a[offset(1, 0, 1)] * a[offset(2, 0, 2)]
                       * a[offset(3, 0, 1)] * a[offset(4, 0, 0)]);
+
+    //READING: This comes from scores indexed 0, 1, 5, 1, 0, and 5(the last one) is blank
     expected_scores[1] = 5.42262; // from tensorflow
 
     // now take the log to account for the softmax
