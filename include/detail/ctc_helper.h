@@ -53,6 +53,8 @@ struct log_plus {
             return p2;
         if (p2 == neg_inf<Arg2>())
             return p1;
+        // READING: Computes the natural (base e) logarithm of 1+arg.
+        // This function is more precise than the expression std::log(1+arg) if arg is close to zero.
         Res result = log1p(exp(-fabs(p1 - p2))) + maximum<Res>()(p1, p2);
         return result;
     }
