@@ -100,6 +100,11 @@ private:
                                  ProbT* output);
 };
 
+/* READING:
+T: Length of utterance (time)
+L: Number of labels in transcription
+S: 2*L + 1, Number of labels with blanks
+*/
 template<typename ProbT>
 CpuCTC<ProbT>::CpuCTC_metadata::CpuCTC_metadata(int L, int S, int T, int mb,
                                                 int alphabet_size,
@@ -125,6 +130,12 @@ CpuCTC<ProbT>::CpuCTC_metadata::CpuCTC_metadata(int L, int S, int T, int mb,
     repeats = setup_labels(labels, blank_label, L, S);
 }
 
+/* READING:
+1. Generate L' from L, L'is represented with labels_w_blanks
+2. Calculate auxiliary array s_inc and e_inc for Forward-Backward Algo
+  a. s_inc is for pruning the update's starting position
+  a. e_inc is for pruning the update's ending position
+*/
 template<typename ProbT>
 int CpuCTC<ProbT>::CpuCTC_metadata::setup_labels(const int* const labels,
                                                  int blank_label, int L, int S) {
@@ -159,6 +170,7 @@ int CpuCTC<ProbT>::CpuCTC_metadata::setup_labels(const int* const labels,
     return repeats;
 }
 
+//READING: 用加max(activation)的方式实现数值稳定
 template<typename ProbT>
 void
 CpuCTC<ProbT>::softmax(const ProbT* const activations, ProbT* probs,
@@ -184,6 +196,9 @@ CpuCTC<ProbT>::softmax(const ProbT* const activations, ProbT* probs,
     }
 }
 
+/* READING:
+
+*/
 template<typename ProbT>
 std::tuple<ProbT, bool>
 CpuCTC<ProbT>::cost_and_grad_kernel(ProbT *grad, const ProbT* const probs,
@@ -212,6 +227,7 @@ CpuCTC<ProbT>::cost_and_grad_kernel(ProbT *grad, const ProbT* const probs,
                                               ctcm.output);
 
     ProbT diff = std::abs(llForward - llBackward);
+    // READING: threshold is 0.1, llForward should be equal to llBackward theoretically
     if (diff > ctc_helper::threshold) {
         over_threshold = true;
     }
@@ -227,6 +243,11 @@ ProbT CpuCTC<ProbT>::compute_alphas(const ProbT* probs, int repeats, int S, int 
                                     const int* const labels,
                                     ProbT* alphas) {
 
+    /* READING: 
+    如果表示transcription的长度（即l'，或labels_w_labels）的长度比T要短，即T的长度足够表示transcription，则从0开始，否则从1开始
+    如果l'的长度（即transcription长度*2+1）>1，也就是transcription的长度不为0，则end为2，否则end为1
+    这一块主要在做边界情况的处理
+    */
     int start =  (((S /2) + repeats - T) < 0) ? 0 : 1,
             end = S > 1 ? 2 : 1;
 
@@ -235,7 +256,9 @@ ProbT CpuCTC<ProbT>::compute_alphas(const ProbT* probs, int repeats, int S, int 
     }
 
     for(int t = 1; t < T; ++t) {
+        // READING: (S / 2) + repeats: 最短可以表示labels的长度
         int remain = (S / 2) + repeats - (T - t);
+        // READING: 这里是为了剪枝加速，因为更新时很多位置概率一定是0
         if(remain >= 0)
             start += s_inc[remain];
         if(t <= (S / 2) + repeats)
@@ -249,6 +272,8 @@ ProbT CpuCTC<ProbT>::compute_alphas(const ProbT* probs, int repeats, int S, int 
         }
 
         for(int i = startloop; i < end; ++i) {
+            // READING: log_plus 借用log1p来实现 把两个用log表示的概率的原概率加起来 使用log1p以后，即使原概率数量级差距很大，也可以精确的计算。
+            // READING: http://en.cppreference.com/w/cpp/numeric/math/log1p
             ProbT prev_sum = ctc_helper::log_plus<ProbT>()(alphas[i + idx2], alphas[(i-1) + idx2]);
 
             // Skip two if not on blank and not on repeat.
@@ -284,6 +309,7 @@ ProbT CpuCTC<ProbT>::compute_betas_and_grad(ProbT* grad, const ProbT* const prob
     int start = S > 1 ? (S - 2) : 0,
             end = (T > (S / 2) + repeats) ? S : S-1;
 
+    // READING: output is sum of alpha * beta wrt label i
     std::fill(output, output + alphabet_size_, ctc_helper::neg_inf<ProbT>());
 
     //set the starting values in the beta column at the very right edge
@@ -341,6 +367,7 @@ ProbT CpuCTC<ProbT>::compute_betas_and_grad(ProbT* grad, const ProbT* const prob
                     ctc_helper::log_plus<ProbT>()(alphas[i + idx1], output[labels[i]]);
         }
 
+        // READING: betas[S-1] can only be updated from betas[S-1] at next time step
         if (end == S) {
             betas[(S-1)] = betas[(S-1)] + std::log(probs[blank_label_ + idx3]);
             alphas[(S-1) + idx1] += betas[(S-1)];
@@ -372,6 +399,7 @@ ProbT CpuCTC<ProbT>::compute_betas_and_grad(ProbT* grad, const ProbT* const prob
     return loglike;
 }
 
+// READING: calculate cost(forward) and grad(forward+backward+db)
 template<typename ProbT>
 ctcStatus_t
 CpuCTC<ProbT>::cost_and_grad(const ProbT* const activations,
@@ -422,6 +450,7 @@ CpuCTC<ProbT>::cost_and_grad(const ProbT* const activations,
 
         bool mb_status;
 
+        // READING: Creates a tuple of lvalue references to its arguments or instances of std::ignore.
         std::tie(costs[mb], mb_status) =
                 cost_and_grad_kernel(grads + mb * alphabet_size_,
                                      probs + mb * alphabet_size_,
@@ -433,6 +462,7 @@ CpuCTC<ProbT>::cost_and_grad(const ProbT* const activations,
     return CTC_STATUS_SUCCESS;
 }
 
+// READING: only do forward
 template<typename ProbT>
 ctcStatus_t CpuCTC<ProbT>::score_forward(const ProbT* const activations,
                                          ProbT* costs,
